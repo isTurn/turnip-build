@@ -20,25 +20,32 @@ jobs:
 
       - name: Add arm64 architecture and install cross-deps
         run: |
-          # Temporarily move third-party repos that don't support arm64
-          sudo mkdir -p /tmp/apt-sources-backup
-          sudo mv /etc/apt/sources.list.d/* /tmp/apt-sources-backup/ 2>/dev/null || true
-          # Also ensure sources.list only has official Ubuntu repos
-          echo "deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list
-          echo "deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb http://archive.ubuntu.com/ubuntu noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          # Ubuntu 24.04 uses deb822 format; check and configure
+          echo "=== Current apt sources ==="
+          ls -la /etc/apt/sources.list.d/
+          cat /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || echo "no ubuntu.sources"
+          cat /etc/apt/sources.list 2>/dev/null || echo "no sources.list"
+
+          # Remove all existing sources and set up proper multi-arch sources
+          sudo rm -f /etc/apt/sources.list
+          sudo rm -f /etc/apt/sources.list.d/*.sources
+          sudo rm -f /etc/apt/sources.list.d/*.list
+
+          # amd64 from archive, arm64 from ports
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
 
           sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y libdrm-dev:arm64
 
-          # Restore third-party repos
-          sudo mv /tmp/apt-sources-backup/* /etc/apt/sources.list.d/ 2>/dev/null || true
-
-          # Verify
-          echo "=== libdrm arm64 files ==="
-          dpkg -L libdrm-dev:arm64 | head -20
+          echo "=== Verify libdrm arm64 ==="
           ls -la /usr/lib/aarch64-linux-gnu/pkgconfig/libdrm*.pc 2>/dev/null
+          ls -la /usr/lib/aarch64-linux-gnu/libdrm*.so* 2>/dev/null | head -5
 
       - name: Download Mesa 26.0.3
         run: |
