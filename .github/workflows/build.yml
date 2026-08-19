@@ -17,6 +17,7 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             ninja-build pkg-config python3-pip xz-utils meson
           meson --version
+          aarch64-linux-gnu-gcc --version | head -1
 
       - name: Add arm64 architecture and install cross-deps
         run: |
@@ -101,9 +102,23 @@ jobs:
         run: exit 1
 
       - name: Build
+        id: build
+        continue-on-error: true
         run: |
           cd mesa-26.0.3
-          ninja -C build -j$(nproc)
+          ninja -C build -j2 2>&1 | tee ../ninja-build.log
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Upload build log on failure
+        if: steps.build.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: ninja-build.log
+
+      - name: Fail if build failed
+        if: steps.build.outputs.exit_code != '0'
+        run: exit 1
 
       - name: Locate build outputs
         run: |
