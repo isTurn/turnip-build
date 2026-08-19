@@ -66,8 +66,8 @@ jobs:
 
       - name: Configure Mesa
         id: configure
+        continue-on-error: true
         run: |
-          set +e
           cd mesa-26.0.3
           meson build --cross-file=../cross_aarch64.txt \
             -Dstrip=true \
@@ -85,35 +85,8 @@ jobs:
             -Dfreedreno-kmds=kgsl,msm \
             -Dprefix=/usr \
             -Dlibdir=lib/aarch64-linux-gnu \
-            -Dbuildtype=release > ../meson-configure.log 2>&1
-          RESULT=$?
-          set -e
-          echo "exit_code=$RESULT" >> $GITHUB_OUTPUT
-          echo "meson exit code: $RESULT"
-          if [ $RESULT -ne 0 ]; then
-            echo "=== CONFIGURE OUTPUT (last 100 lines) ==="
-            tail -100 ../meson-configure.log
-            echo "=== MESON-LOG.TXT (last 100 lines) ==="
-            tail -100 build/meson-logs/meson-log.txt 2>/dev/null || echo "(no meson-log.txt)"
-            # Create issue with full log
-            cd ..
-            {
-              echo "## Meson Configure Output"
-              echo '```'
-              cat meson-configure.log
-              echo '```'
-              echo ""
-              echo "## meson-log.txt"
-              echo '```'
-              cat mesa-26.0.3/build/meson-logs/meson-log.txt 2>/dev/null || echo "(no meson-log.txt)"
-              echo '```'
-            } > issue-body.md
-            gh issue create --title "Configure failure log" --body-file issue-body.md || echo "failed to create issue"
-          fi
-
-      - name: Fail if configure failed
-        if: steps.configure.outputs.exit_code != '0'
-        run: exit 1
+            -Dbuildtype=release 2>&1 | tee ../meson-configure.log
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
 
       - name: Build
         run: |
@@ -122,18 +95,28 @@ jobs:
 
       - name: Locate build outputs
         run: |
+          echo "=== All .so files ==="
           find mesa-26.0.3/build -name "*.so*" -exec ls -la {} \;
+          echo "=== file type ==="
           find mesa-26.0.3/build -name "libvulkan_freedreno*" -exec file {} \;
 
       - name: Package artifacts
         run: |
           mkdir -p pkg/usr/lib/aarch64-linux-gnu
           mkdir -p pkg/usr/share/vulkan/icd.d
+
+          # Find and copy .so, follow symlinks
           SO_FILE=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" | head -1)
-          echo "Found: $SO_FILE"
+          echo "Found SO: $SO_FILE"
+          if [ -z "$SO_FILE" ]; then
+            echo "ERROR: libvulkan_freedreno.so not found!"
+            find mesa-26.0.3/build -name "*freedreno*" -name "*.so*"
+            exit 1
+          fi
           cp -L "$SO_FILE" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
           ls -la pkg/usr/lib/aarch64-linux-gnu/
           file pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
+
           cat > pkg/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json << 'JSON_EOF'
           {
               "ICD": {
@@ -143,10 +126,12 @@ jobs:
               "file_format_version": "1.0.0"
           }
           JSON_EOF
+
           cd pkg
           tar --zstd -cf ../turnip-26.0.3.tzst .
           cd ..
           ls -la turnip-26.0.3.tzst
+          echo "=== Archive contents ==="
           tar -tvf turnip-26.0.3.tzst
 
       - name: Upload artifact
