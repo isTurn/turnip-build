@@ -59,32 +59,45 @@ jobs:
           cd mesa-26.0.3
           ninja -C build -j2 2>&1 | tee ../build.log
 
-      - name: Find driver
-        run: |
-          echo "=== Searching for driver ==="
-          find mesa-26.0.3/build -name "*vulkan*freedreno*" -o -name "*freedreno*vulkan*" 2>/dev/null
-          find mesa-26.0.3/build -name "libvulkan_freedreno*" 2>/dev/null -exec ls -la {} \;
-          echo "=== All .so in src/freedreno ==="
-          find mesa-26.0.3/build/src/freedreno -name "*.so*" 2>/dev/null -exec ls -la {} \;
-
       - name: Package
         run: |
           mkdir -p pkg/usr/lib/aarch64-linux-gnu pkg/usr/share/vulkan/icd.d
 
-          # Find the actual .so (handle symlinks)
-          DRIVER=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" 2>/dev/null | head -1)
+          # Debug: list build directory structure
+          echo "=== Build dir structure (top 3 levels) ==="
+          find mesa-26.0.3/build -maxdepth 3 -type d 2>/dev/null | head -50
+          echo "=== All .so files anywhere in build ==="
+          find mesa-26.0.3/build -name "*.so*" 2>/dev/null -exec ls -la {} \; | head -30
+          echo "=== All freedreno files ==="
+          find mesa-26.0.3/build -name "*freedreno*" 2>/dev/null | head -20
+
+          # Find the driver .so - try multiple approaches
+          DRIVER=""
+          # Try exact name first
+          DRIVER=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" -type f 2>/dev/null | head -1)
+          # Try symlink
           if [ -z "$DRIVER" ]; then
-            DRIVER=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so.*" 2>/dev/null | head -1)
+            DRIVER=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" 2>/dev/null | head -1)
           fi
-          echo "Driver found: $DRIVER"
+          # Try any vulkan freedreno
+          if [ -z "$DRIVER" ]; then
+            DRIVER=$(find mesa-26.0.3/build -name "*vulkan*freedreno*.so*" 2>/dev/null | head -1)
+          fi
+          # Try any .so in freedreno vulkan dir
+          if [ -z "$DRIVER" ]; then
+            DRIVER=$(find mesa-26.0.3/build -path "*freedreno*vulkan*" -name "*.so*" 2>/dev/null | head -1)
+          fi
+
+          echo "DRIVER=$DRIVER"
 
           if [ -z "$DRIVER" ]; then
-            echo "ERROR: driver not found"
-            find mesa-26.0.3/build -name "*.so" 2>/dev/null | head -20
+            echo "ERROR: Could not find driver .so"
+            echo "=== ninja targets ==="
+            cd mesa-26.0.3 && ninja -C build -t targets all 2>/dev/null | grep -i "vulkan\|freedreno" | head -20
             exit 1
           fi
 
-          # Copy - if symlink, dereference; if that fails, copy as-is
+          echo "Copying $DRIVER"
           cp -L "$DRIVER" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so 2>/dev/null || cp "$DRIVER" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
           ls -la pkg/usr/lib/aarch64-linux-gnu/
           file pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
