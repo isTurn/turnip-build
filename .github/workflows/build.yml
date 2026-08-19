@@ -54,37 +54,38 @@ jobs:
           meson build --cross-file=../cross_aarch64.txt -Dstrip=true -Dgbm=disabled -Dopengl=false -Dllvm=disabled -Dshared-llvm=disabled -Dplatforms=x11 -Dgallium-drivers= -Dxmlconfig=disabled -Dvulkan-drivers=freedreno -Dmicrosoft-clc=disabled -Dlibunwind=disabled -Dvalgrind=disabled -Dfreedreno-kmds=kgsl,msm -Dprefix=/usr -Dlibdir=lib/aarch64-linux-gnu -Dbuildtype=release 2>&1 | tee ../configure.log
 
       - name: Build
-        id: build
-        continue-on-error: true
         run: |
           cd mesa-26.0.3
-          ninja -C build -j1 2>&1 | tee ../build.log
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
-
-      - name: Commit build log on failure
-        if: steps.build.outputs.exit_code != '0'
-        run: |
-          echo "=== Build failed, last 200 lines ==="
-          tail -200 build.log
-          # Save last 300 lines and commit
-          tail -300 build.log > build-error.log
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f build-error.log
-          git commit -m "Add build error log" || true
-          git push || true
-
-      - name: Fail if build failed
-        if: steps.build.outputs.exit_code != '0'
-        run: exit 1
+          ninja -C build -j1
 
       - name: Package
+        id: package
+        continue-on-error: true
         run: |
           mkdir -p pkg/usr/lib/aarch64-linux-gnu pkg/usr/share/vulkan/icd.d
+
+          {
+            echo "=== build/src/freedreno/vulkan/ ==="
+            ls -la mesa-26.0.3/build/src/freedreno/vulkan/ 2>&1
+            echo ""
+            echo "=== find libvulkan_freedreno ==="
+            find mesa-26.0.3/build -name "libvulkan_freedreno*" 2>&1
+            echo ""
+            echo "=== all .so in build ==="
+            find mesa-26.0.3/build -name "*.so*" 2>&1
+          } > package-debug.txt 2>&1
+
           DRIVER=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" 2>/dev/null | head -1)
-          echo "Driver: $DRIVER"
-          cp -L "$DRIVER" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so 2>/dev/null || cp "$DRIVER" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
-          ls -la pkg/usr/lib/aarch64-linux-gnu/
+          echo "DRIVER=$DRIVER" >> package-debug.txt
+
+          if [ -z "$DRIVER" ]; then
+            echo "exit_code=1" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          cp -v -L "$DRIVER" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so >> package-debug.txt 2>&1
+          ls -la pkg/usr/lib/aarch64-linux-gnu/ >> package-debug.txt 2>&1
+
           cat > pkg/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json << 'JSON'
           {
               "ICD": {
@@ -94,9 +95,25 @@ jobs:
               "file_format_version": "1.0.0"
           }
           JSON
-          cd pkg && tar --zstd -cf ../turnip-26.0.3.tzst . && cd ..
-          ls -la turnip-26.0.3.tzst
-          tar -tvf turnip-26.0.3.tzst
+
+          cd pkg && tar --zstd -cvf ../turnip-26.0.3.tzst . >> ../package-debug.txt 2>&1 && cd ..
+          ls -la turnip-26.0.3.tzst >> package-debug.txt 2>&1
+          tar -tvf turnip-26.0.3.tzst >> package-debug.txt 2>&1
+          echo "exit_code=0" >> $GITHUB_OUTPUT
+
+      - name: Commit package debug on failure
+        if: steps.package.outputs.exit_code != '0'
+        run: |
+          cat package-debug.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f package-debug.txt
+          git commit -m "Add package debug info" || true
+          git push || true
+
+      - name: Fail if package failed
+        if: steps.package.outputs.exit_code != '0'
+        run: exit 1
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
