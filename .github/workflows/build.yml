@@ -20,16 +20,25 @@ jobs:
 
       - name: Add arm64 architecture and install cross-deps
         run: |
+          # Temporarily move third-party repos that don't support arm64
+          sudo mkdir -p /tmp/apt-sources-backup
+          sudo mv /etc/apt/sources.list.d/* /tmp/apt-sources-backup/ 2>/dev/null || true
+          # Also ensure sources.list only has official Ubuntu repos
+          echo "deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list
+          echo "deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb http://archive.ubuntu.com/ubuntu noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+
           sudo dpkg --add-architecture arm64
-          # Show sources to debug
-          echo "=== sources.list ==="
-          cat /etc/apt/sources.list 2>/dev/null || echo "no sources.list"
-          echo "=== sources.list.d ==="
-          ls /etc/apt/sources.list.d/ 2>/dev/null
-          # Update, allow failures from repos that don't support arm64
-          sudo apt-get update || echo "apt-get update had warnings/errors, continuing..."
-          echo "=== Attempting install libdrm-dev:arm64 ==="
+          sudo apt-get update
           sudo apt-get install -y libdrm-dev:arm64
+
+          # Restore third-party repos
+          sudo mv /tmp/apt-sources-backup/* /etc/apt/sources.list.d/ 2>/dev/null || true
+
+          # Verify
+          echo "=== libdrm arm64 files ==="
+          dpkg -L libdrm-dev:arm64 | head -20
+          ls -la /usr/lib/aarch64-linux-gnu/pkgconfig/libdrm*.pc 2>/dev/null
 
       - name: Download Mesa 26.0.3
         run: |
