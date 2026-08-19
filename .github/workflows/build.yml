@@ -91,26 +91,25 @@ jobs:
           echo "exit_code=$RESULT" >> $GITHUB_OUTPUT
           echo "meson exit code: $RESULT"
           if [ $RESULT -ne 0 ]; then
-            echo "=== CONFIGURE OUTPUT ==="
-            cat ../meson-configure.log
-            echo "=== MESON-LOG.TXT ==="
-            cat build/meson-logs/meson-log.txt 2>/dev/null || echo "(no meson-log.txt)"
-            echo "=== CROSS-COMPILER TEST ==="
-            echo 'int main(){return 0;}' > /tmp/test.c
-            aarch64-linux-gnu-gcc -o /tmp/test /tmp/test.c && echo "cross-compiler OK" || echo "cross-compiler FAIL"
-            echo "=== PKG-CONFIG ==="
-            PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig pkg-config --cflags --libs libdrm 2>&1
+            echo "=== CONFIGURE OUTPUT (last 100 lines) ==="
+            tail -100 ../meson-configure.log
+            echo "=== MESON-LOG.TXT (last 100 lines) ==="
+            tail -100 build/meson-logs/meson-log.txt 2>/dev/null || echo "(no meson-log.txt)"
+            # Create issue with full log
+            cd ..
+            {
+              echo "## Meson Configure Output"
+              echo '```'
+              cat meson-configure.log
+              echo '```'
+              echo ""
+              echo "## meson-log.txt"
+              echo '```'
+              cat mesa-26.0.3/build/meson-logs/meson-log.txt 2>/dev/null || echo "(no meson-log.txt)"
+              echo '```'
+            } > issue-body.md
+            gh issue create --title "Configure failure log" --body-file issue-body.md || echo "failed to create issue"
           fi
-
-      - name: Commit debug log if configure failed
-        if: steps.configure.outputs.exit_code != '0'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          cp mesa-26.0.3/build/meson-logs/meson-log.txt meson-log.txt 2>/dev/null || true
-          git add meson-configure.log meson-log.txt 2>/dev/null
-          git commit -m "Add configure debug logs" || echo "nothing to commit"
-          git push || echo "push failed"
 
       - name: Fail if configure failed
         if: steps.configure.outputs.exit_code != '0'
