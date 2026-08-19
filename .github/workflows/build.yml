@@ -21,7 +21,14 @@ jobs:
       - name: Add arm64 architecture and install cross-deps
         run: |
           sudo dpkg --add-architecture arm64
-          sudo apt-get update
+          # Show sources to debug
+          echo "=== sources.list ==="
+          cat /etc/apt/sources.list 2>/dev/null || echo "no sources.list"
+          echo "=== sources.list.d ==="
+          ls /etc/apt/sources.list.d/ 2>/dev/null
+          # Update, allow failures from repos that don't support arm64
+          sudo apt-get update || echo "apt-get update had warnings/errors, continuing..."
+          echo "=== Attempting install libdrm-dev:arm64 ==="
           sudo apt-get install -y libdrm-dev:arm64
 
       - name: Download Mesa 26.0.3
@@ -87,14 +94,9 @@ jobs:
 
       - name: Package artifacts
         run: |
-          # Create directory structure matching reference package
           mkdir -p pkg/usr/lib/aarch64-linux-gnu
           mkdir -p pkg/usr/share/vulkan/icd.d
-
-          # Copy the driver .so
           find mesa-26.0.3/build -name "libvulkan_freedreno.so" -type f -exec cp {} pkg/usr/lib/aarch64-linux-gnu/ \;
-
-          # Create ICD json with correct library path (matching reference format)
           cat > pkg/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json << 'JSON_EOF'
           {
               "ICD": {
@@ -104,12 +106,8 @@ jobs:
               "file_format_version": "1.0.0"
           }
           JSON_EOF
-
-          # Verify
           echo "=== Package contents ==="
           find pkg -type f -exec ls -la {} \;
-
-          # Create tar.zst (same format as .tzst)
           cd pkg
           tar --zstd -cf ../turnip-26.0.3.tzst .
           cd ..
