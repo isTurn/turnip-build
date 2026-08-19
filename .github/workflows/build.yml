@@ -65,6 +65,7 @@ jobs:
           CROSS_EOF
 
       - name: Configure Mesa
+        id: configure
         run: |
           cd mesa-26.0.3
           meson build --cross-file=../cross_aarch64.txt \
@@ -85,19 +86,39 @@ jobs:
             -Dlibdir=lib/aarch64-linux-gnu \
             -Dbuildtype=release > ../meson-configure.log 2>&1
           RESULT=$?
-          echo "meson exit code: $RESULT"
+          echo "exit_code=$RESULT" >> $GITHUB_OUTPUT
           if [ $RESULT -ne 0 ]; then
-            echo "=== CONFIGURE LOG ==="
-            cat ../meson-configure.log
-            echo "=== MESON-LOG.TXT ==="
-            cat build/meson-logs/meson-log.txt 2>/dev/null || echo "no meson-log.txt"
-            # Upload to paste.rs for inspection
-            echo "=== Uploading log to paste.rs ==="
-            cat ../meson-configure.log | curl -s --data-binary @- https://paste.rs/ || echo "paste upload failed"
-            echo ""
-            exit $RESULT
+            echo "=== CONFIGURE FAILED, collecting logs ==="
+            {
+              echo "=== meson configure output ==="
+              cat ../meson-configure.log
+              echo ""
+              echo "=== meson-log.txt ==="
+              cat build/meson-logs/meson-log.txt 2>/dev/null || echo "(no meson-log.txt)"
+              echo ""
+              echo "=== host compiler test ==="
+              echo 'int main(){return 0;}' > /tmp/test.c
+              aarch64-linux-gnu-gcc -o /tmp/test /tmp/test.c && echo "cross-compiler works" || echo "cross-compiler FAILED"
+              echo ""
+              echo "=== pkg-config libdrm ==="
+              PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig pkg-config --cflags --libs libdrm 2>&1
+            } > ../debug-output.txt 2>&1
+            cat ../debug-output.txt
           fi
-          echo "Configure succeeded"
+          exit 0
+
+      - name: Commit debug log if configure failed
+        if: steps.configure.outputs.exit_code != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add debug-output.txt meson-configure.log 2>/dev/null
+          git commit -m "Add configure debug logs" || echo "nothing to commit"
+          git push || echo "push failed (may already exist)"
+
+      - name: Fail if configure failed
+        if: steps.configure.outputs.exit_code != '0'
+        run: exit 1
 
       - name: Build
         run: |
