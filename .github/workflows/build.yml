@@ -87,44 +87,43 @@ jobs:
             -Dbuildtype=release 2>&1 | tee ../meson-configure.log
 
       - name: Build
-        id: build
         continue-on-error: true
         run: |
           cd mesa-26.0.3
           ninja -C build -j1 2>&1 | tee ../ninja-build.log
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
 
-      - name: Upload build log on failure
-        if: steps.build.outputs.exit_code != '0'
+      - name: Locate and verify build outputs
         run: |
-          echo "=== Build failed, last 150 lines ==="
-          tail -150 ninja-build.log
-          # Save last 200 lines to a file and commit
-          tail -200 ninja-build.log > build-error.log
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f build-error.log
-          git commit -m "Add build error log" || echo "nothing to commit"
-          git push || echo "push failed"
-
-      - name: Fail if build failed
-        if: steps.build.outputs.exit_code != '0'
-        run: exit 1
-
-      - name: Locate build outputs
-        run: |
-          find mesa-26.0.3/build -name "*.so*" -exec ls -la {} \;
-          find mesa-26.0.3/build -name "libvulkan_freedreno*" -exec file {} \;
+          set -x
+          echo "=== Searching for libvulkan_freedreno ==="
+          find mesa-26.0.3/build -name "*freedreno*" -name "*.so*" -exec ls -la {} \;
+          echo "=== Searching for any vulkan .so ==="
+          find mesa-26.0.3/build -path "*vulkan*" -name "*.so*" -exec ls -la {} \;
+          echo "=== All .so files ==="
+          find mesa-26.0.3/build -name "*.so*" -type f -exec ls -la {} \; | head -30
 
       - name: Package artifacts
         run: |
+          set -x
           mkdir -p pkg/usr/lib/aarch64-linux-gnu
           mkdir -p pkg/usr/share/vulkan/icd.d
-          SO_FILE=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" | head -1)
-          echo "Found SO: $SO_FILE"
-          cp -L "$SO_FILE" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
+
+          # Find the .so file (may be symlink or regular file)
+          SO_FILE=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" 2>/dev/null | head -1)
+          echo "SO_FILE=$SO_FILE"
+          if [ -z "$SO_FILE" ]; then
+            echo "ERROR: libvulkan_freedreno.so not found, searching broadly..."
+            find mesa-26.0.3/build -name "*vulkan*" -name "*.so*"
+            find mesa-26.0.3/build -name "*freedreno*"
+            exit 1
+          fi
+
+          # Copy with dereference
+          cp -v -L "$SO_FILE" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
           ls -la pkg/usr/lib/aarch64-linux-gnu/
           file pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
+
+          # Create ICD json
           cat > pkg/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json << 'JSON_EOF'
           {
               "ICD": {
@@ -134,10 +133,13 @@ jobs:
               "file_format_version": "1.0.0"
           }
           JSON_EOF
+
+          # Create tar.zst
           cd pkg
-          tar --zstd -cf ../turnip-26.0.3.tzst .
+          tar --zstd -cvf ../turnip-26.0.3.tzst .
           cd ..
           ls -la turnip-26.0.3.tzst
+          echo "=== Archive contents ==="
           tar -tvf turnip-26.0.3.tzst
 
       - name: Upload artifact
