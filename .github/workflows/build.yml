@@ -14,127 +14,82 @@ jobs:
       - name: Install cross-compilation toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            ninja-build pkg-config python3-pip xz-utils meson
-          meson --version
-          aarch64-linux-gnu-gcc --version | head -1
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu ninja-build pkg-config meson
 
-      - name: Add arm64 architecture and install cross-deps
+      - name: Setup arm64 cross-deps
         run: |
-          sudo rm -f /etc/apt/sources.list
-          sudo rm -f /etc/apt/sources.list.d/*.sources
-          sudo rm -f /etc/apt/sources.list.d/*.list
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-
+          sudo rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list
+          printf 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse\ndeb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse\ndeb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-security main restricted universe multiverse\ndeb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse\ndeb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse\ndeb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse\n' | sudo tee /etc/apt/sources.list
           sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y libdrm-dev:arm64 \
-            libx11-dev:arm64 libxext-dev:arm64 libxfixes-dev:arm64 \
-            libxcb-glx0-dev:arm64 libxcb-dri2-0-dev:arm64 libxcb-dri3-dev:arm64 \
-            libxcb-present-dev:arm64 libxcb-sync-dev:arm64 libxshmfence-dev:arm64 \
-            libxrandr-dev:arm64 wayland-protocols:arm64
+          sudo apt-get install -y libdrm-dev:arm64 libx11-dev:arm64 libxext-dev:arm64 libxfixes-dev:arm64 libxcb-glx0-dev:arm64 libxcb-dri2-0-dev:arm64 libxcb-dri3-dev:arm64 libxcb-present-dev:arm64 libxcb-sync-dev:arm64 libxshmfence-dev:arm64 libxrandr-dev:arm64
 
-      - name: Download Mesa 26.0.3
+      - name: Download and extract Mesa 26.0.3
         run: |
           wget -q https://archive.mesa3d.org/mesa-26.0.3.tar.xz
           tar -xf mesa-26.0.3.tar.xz
 
-      - name: Create meson cross file
+      - name: Create cross file
         run: |
-          cat > cross_aarch64.txt << 'CROSS_EOF'
+          cat > cross_aarch64.txt << 'EOF'
           [binaries]
           c = 'aarch64-linux-gnu-gcc'
           cpp = 'aarch64-linux-gnu-g++'
           ar = 'aarch64-linux-gnu-ar'
           strip = 'aarch64-linux-gnu-strip'
           pkgconfig = 'pkg-config'
-
           [built-in options]
           pkg_config_path = '/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig'
-
           [host_machine]
           system = 'linux'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-          CROSS_EOF
+          EOF
 
       - name: Configure Mesa
         continue-on-error: true
         run: |
           cd mesa-26.0.3
-          meson build --cross-file=../cross_aarch64.txt \
-            -Dstrip=true \
-            -Dgbm=disabled \
-            -Dopengl=false \
-            -Dllvm=disabled \
-            -Dshared-llvm=disabled \
-            -Dplatforms=x11 \
-            -Dgallium-drivers= \
-            -Dxmlconfig=disabled \
-            -Dvulkan-drivers=freedreno \
-            -Dmicrosoft-clc=disabled \
-            -Dlibunwind=disabled \
-            -Dvalgrind=disabled \
-            -Dfreedreno-kmds=kgsl,msm \
-            -Dprefix=/usr \
-            -Dlibdir=lib/aarch64-linux-gnu \
-            -Dbuildtype=release 2>&1 | tee ../meson-configure.log
+          meson build --cross-file=../cross_aarch64.txt -Dstrip=true -Dgbm=disabled -Dopengl=false -Dllvm=disabled -Dshared-llvm=disabled -Dplatforms=x11 -Dgallium-drivers= -Dxmlconfig=disabled -Dvulkan-drivers=freedreno -Dmicrosoft-clc=disabled -Dlibunwind=disabled -Dvalgrind=disabled -Dfreedreno-kmds=kgsl,msm -Dprefix=/usr -Dlibdir=lib/aarch64-linux-gnu -Dbuildtype=release 2>&1 | tee ../configure.log
 
       - name: Build
         continue-on-error: true
         run: |
           cd mesa-26.0.3
-          ninja -C build -j1 2>&1 | tee ../ninja-build.log
+          ninja -C build -j2 2>&1 | tee ../build.log
 
-      - name: Package artifacts
-        id: package
-        continue-on-error: true
+      - name: Find driver
         run: |
-          mkdir -p pkg/usr/lib/aarch64-linux-gnu
-          mkdir -p pkg/usr/share/vulkan/icd.d
+          echo "=== Searching for driver ==="
+          find mesa-26.0.3/build -name "*vulkan*freedreno*" -o -name "*freedreno*vulkan*" 2>/dev/null
+          find mesa-26.0.3/build -name "libvulkan_freedreno*" 2>/dev/null -exec ls -la {} \;
+          echo "=== All .so in src/freedreno ==="
+          find mesa-26.0.3/build/src/freedreno -name "*.so*" 2>/dev/null -exec ls -la {} \;
 
-          # List all .so files in build for debugging
-          {
-            echo "=== All .so files in build ==="
-            find mesa-26.0.3/build -name "*.so*" -exec ls -la {} \;
-            echo ""
-            echo "=== All freedreno files ==="
-            find mesa-26.0.3/build -name "*freedreno*" -exec ls -la {} \;
-            echo ""
-            echo "=== ninja targets matching vulkan ==="
-            cd mesa-26.0.3 && ninja -C build -t targets all 2>/dev/null | grep -i vulkan | head -20
-            cd ..
-          } > package-debug.txt 2>&1
+      - name: Package
+        run: |
+          mkdir -p pkg/usr/lib/aarch64-linux-gnu pkg/usr/share/vulkan/icd.d
 
-          # Try multiple patterns to find the driver
-          SO_FILE=""
-          for pattern in "libvulkan_freedreno.so" "libvulkan_freedreno.so.*" "*freedreno*vulkan*.so" "*vulkan*freedreno*.so"; do
-            SO_FILE=$(find mesa-26.0.3/build -name "$pattern" 2>/dev/null | head -1)
-            if [ -n "$SO_FILE" ]; then
-              echo "Found with pattern '$pattern': $SO_FILE" >> package-debug.txt
-              break
-            fi
-          done
+          # Find the actual .so (handle symlinks)
+          DRIVER=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" 2>/dev/null | head -1)
+          if [ -z "$DRIVER" ]; then
+            DRIVER=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so.*" 2>/dev/null | head -1)
+          fi
+          echo "Driver found: $DRIVER"
 
-          echo "SO_FILE=$SO_FILE" >> package-debug.txt
-
-          if [ -z "$SO_FILE" ]; then
-            echo "ERROR: Could not find libvulkan_freedreno.so" >> package-debug.txt
-            echo "exit_code=1" >> $GITHUB_OUTPUT
-            exit 0
+          if [ -z "$DRIVER" ]; then
+            echo "ERROR: driver not found"
+            find mesa-26.0.3/build -name "*.so" 2>/dev/null | head -20
+            exit 1
           fi
 
-          cp -L "$SO_FILE" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
-          ls -la pkg/usr/lib/aarch64-linux-gnu/ >> package-debug.txt 2>&1
-          file pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so >> package-debug.txt 2>&1
+          # Copy - if symlink, dereference; if that fails, copy as-is
+          cp -L "$DRIVER" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so 2>/dev/null || cp "$DRIVER" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
+          ls -la pkg/usr/lib/aarch64-linux-gnu/
+          file pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
 
-          cat > pkg/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json << 'JSON_EOF'
+          cat > pkg/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json << 'JSON'
           {
               "ICD": {
                   "api_version": "1.1.246",
@@ -142,28 +97,11 @@ jobs:
               },
               "file_format_version": "1.0.0"
           }
-          JSON_EOF
+          JSON
 
-          cd pkg
-          tar --zstd -cvf ../turnip-26.0.3.tzst . >> ../package-debug.txt 2>&1
-          cd ..
-          ls -la turnip-26.0.3.tzst >> package-debug.txt 2>&1
-          tar -tvf turnip-26.0.3.tzst >> package-debug.txt 2>&1
-          echo "exit_code=0" >> $GITHUB_OUTPUT
-
-      - name: Commit debug info on package failure
-        if: steps.package.outputs.exit_code != '0'
-        run: |
-          cat package-debug.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f package-debug.txt
-          git commit -m "Add package debug info" || echo "nothing to commit"
-          git push || echo "push failed"
-
-      - name: Fail if package failed
-        if: steps.package.outputs.exit_code != '0'
-        run: exit 1
+          cd pkg && tar --zstd -cf ../turnip-26.0.3.tzst . && cd ..
+          ls -la turnip-26.0.3.tzst
+          tar -tvf turnip-26.0.3.tzst
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -171,11 +109,10 @@ jobs:
           name: turnip-26.0.3
           path: turnip-26.0.3.tzst
 
-      - name: Create Release
+      - name: Release
         if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v26.0.3
-          name: Turnip 26.0.3 for Winlator
-          body: Automated cross-compiled build of Mesa Turnip 26.0.3 for aarch64-linux-gnu (Winlator)
+          name: Turnip 26.0.3
           files: turnip-26.0.3.tzst
