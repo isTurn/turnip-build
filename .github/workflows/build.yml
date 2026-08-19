@@ -122,3 +122,12 @@ jobs:
         with:
           name: turnip-26.0.3
           path: turnip-26.0.3.tzst
+
+      - name: Create Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v26.0.3" turnip-26.0.3.tzst \
+            --title "Turnip 26.0.3 for Winlator" \
+            --notes "Automated cross-compiled build of Mesa Turnip 26.0.3 for aarch64-linux-gnu (Winlator)"
