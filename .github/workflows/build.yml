@@ -65,42 +65,26 @@ jobs:
           CROSS_EOF
 
       - name: Configure Mesa
-        id: configure
         run: |
           cd mesa-26.0.3
-          # Retry configure up to 3 times (network may be flaky for subprojects)
-          for i in 1 2 3; do
-            echo "=== Configure attempt $i ==="
-            rm -rf build
-            if meson build --cross-file=../cross_aarch64.txt \
-              -Dstrip=true \
-              -Dgbm=disabled \
-              -Dopengl=false \
-              -Dllvm=disabled \
-              -Dshared-llvm=disabled \
-              -Dplatforms=x11 \
-              -Dgallium-drivers= \
-              -Dxmlconfig=disabled \
-              -Dvulkan-drivers=freedreno \
-              -Dmicrosoft-clc=disabled \
-              -Dlibunwind=disabled \
-              -Dvalgrind=disabled \
-              -Dfreedreno-kmds=kgsl,msm \
-              -Dprefix=/usr \
-              -Dlibdir=lib/aarch64-linux-gnu \
-              -Dbuildtype=release; then
-              echo "Configure succeeded on attempt $i"
-              exit 0
-            fi
-            echo "Configure failed on attempt $i"
-            if [ -f build/meson-logs/meson-log.txt ]; then
-              echo "=== meson-log.txt (tail) ==="
-              tail -50 build/meson-logs/meson-log.txt
-            fi
-            sleep 5
-          done
-          echo "Configure failed after 3 attempts"
-          exit 1
+          set -o pipefail
+          meson build --cross-file=../cross_aarch64.txt \
+            -Dstrip=true \
+            -Dgbm=disabled \
+            -Dopengl=false \
+            -Dllvm=disabled \
+            -Dshared-llvm=disabled \
+            -Dplatforms=x11 \
+            -Dgallium-drivers= \
+            -Dxmlconfig=disabled \
+            -Dvulkan-drivers=freedreno \
+            -Dmicrosoft-clc=disabled \
+            -Dlibunwind=disabled \
+            -Dvalgrind=disabled \
+            -Dfreedreno-kmds=kgsl,msm \
+            -Dprefix=/usr \
+            -Dlibdir=lib/aarch64-linux-gnu \
+            -Dbuildtype=release 2>&1 | tee ../meson-configure.log
 
       - name: Build
         run: |
@@ -111,9 +95,7 @@ jobs:
         run: |
           echo "=== All .so files in build ==="
           find mesa-26.0.3/build -name "*.so*" -exec ls -la {} \;
-          echo "=== Search for freedreno vulkan ==="
-          find mesa-26.0.3/build -path "*freedreno*vulkan*" | head -20
-          echo "=== file type of libvulkan_freedreno ==="
+          echo "=== file type ==="
           find mesa-26.0.3/build -name "libvulkan_freedreno*" -exec file {} \;
 
       - name: Package artifacts
@@ -121,11 +103,12 @@ jobs:
           mkdir -p pkg/usr/lib/aarch64-linux-gnu
           mkdir -p pkg/usr/share/vulkan/icd.d
 
+          # Find and copy the .so (follow symlinks with -L)
           SO_FILE=$(find mesa-26.0.3/build -name "libvulkan_freedreno.so" | head -1)
-          echo "Found SO file: $SO_FILE"
+          echo "Found: $SO_FILE"
           if [ -z "$SO_FILE" ]; then
-            echo "ERROR: libvulkan_freedreno.so not found!"
-            find mesa-26.0.3/build -name "libvulkan*"
+            echo "ERROR: not found, searching broadly..."
+            find mesa-26.0.3/build -name "*freedreno*" -name "*.so*"
             exit 1
           fi
           cp -L "$SO_FILE" pkg/usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so
@@ -142,13 +125,10 @@ jobs:
           }
           JSON_EOF
 
-          echo "=== Package contents ==="
-          find pkg -type f -exec ls -la {} \;
           cd pkg
           tar --zstd -cf ../turnip-26.0.3.tzst .
           cd ..
           ls -la turnip-26.0.3.tzst
-          echo "=== Archive contents ==="
           tar -tvf turnip-26.0.3.tzst
 
       - name: Upload artifact
